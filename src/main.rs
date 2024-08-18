@@ -5,6 +5,22 @@ fn parse(o: std::process::Output) -> String {
     std::str::from_utf8(&o.stdout).unwrap().trim().to_string()
 }
 
+fn checkout(branch: String) -> Result<(), Box<dyn Error>> {
+    let val = branch.split(":").last().expect("{x}");
+    let checkout = std::process::Command::new("git")
+        .arg("checkout")
+        .arg(val)
+        .output();
+    if checkout.is_err() {
+        std::process::Command::new("git").arg("stash").output()?;
+        std::process::Command::new("git")
+            .arg("checkout")
+            .arg(val)
+            .output()?;
+    }
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let fp = env::home_dir().unwrap().join(".feat");
     let name = env::args().last().unwrap();
@@ -27,36 +43,32 @@ fn main() -> Result<(), Box<dyn Error>> {
             .output()?,
     );
     let key = format!("{name}:{repo}");
+    let feats = fs::read_to_string(&fp)?;
+    let new_branch = feats.lines().find(|x| x.starts_with(&key));
     match branch == "master" {
-        true => {
-            let feats = fs::read_to_string(&fp)?;
-            match feats.lines().find(|x| x.starts_with(&key)) {
-                Some(val) => {
-                    let val = val.split(":").last().expect("{x}");
-                    let checkout = std::process::Command::new("git")
-                        .arg("checkout")
-                        .arg(val)
-                        .output();
-                    if checkout.is_err() {
-                        std::process::Command::new("git").arg("stash").output()?;
-                        std::process::Command::new("git")
-                            .arg("checkout")
-                            .arg(val)
-                            .output()?;
-                    }
-                    Ok(())
-                }
-                None => Err(format!("not feature set for {key}")),
-            }?
-        }
-        false => {
-            let mut file = fs::OpenOptions::new()
-                .create(true)
-                .write(true)
-                .append(true)
-                .open(&fp)?;
-            writeln!(file, "{}:{}", key, branch)?;
-        }
+        true => match new_branch {
+            Some(val) => match checkout(val.to_string()) {
+                Ok(_) => Ok(()),
+                Err(_) => Err(format!("can't checkout {val}")),
+            },
+            None => Err(format!("not feature set for {key}")),
+        }?,
+        false => match new_branch {
+            Some(val) => match checkout(val.to_string()) {
+                Ok(_) => Ok(()),
+                Err(_) => Err(format!("can't checkout {val}")),
+            },
+            None => {
+                let mut file = fs::OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .append(true)
+                    .open(&fp)
+                    .unwrap();
+                writeln!(file, "{}:{}", key, branch).unwrap();
+                Ok(())
+            }
+        }?,
     }
 
     Ok(())
